@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  mcp-router:
+    build: .
+    container_name: asus-merlin-mcp
+    volumes:
+      # Mount SSH keys (read-only)
+      - ~/.ssh:/root/.ssh:ro
+      # Optional: persist logs
+      - ./logs:/app/logs
+    environment:
+      # Router connection settings
+      - ROUTER_HOST=192.168.1.1
+      - ROUTER_PORT=22
+      - ROUTER_USER=admin
+      # Use either password OR key file (key file is more secure)
+      - ROUTER_PASSWORD=your_password_here
+      # - ROUTER_KEY_FILE=/root/.ssh/id_rsa
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
