@@ -2,6 +2,10 @@
 
 Model Context Protocol (MCP) server for managing ASUS routers running Asuswrt-Merlin firmware via SSH/SCP.
 
+![Docker Pulls](https://img.shields.io/docker/pulls/kcsoukup/asus-merlin-mcp)
+![Docker Image Version](https://img.shields.io/docker/v/kcsoukup/asus-merlin-mcp?sort=semver)
+![Docker Image Size](https://img.shields.io/docker/image-size/kcsoukup/asus-merlin-mcp)
+
 ## Features
 
 - **System Information**: Get router uptime, memory, CPU, firmware version
@@ -85,6 +89,23 @@ pip3 install podman-compose
 
 ### Option 2: Docker Installation
 
+#### Quick Start - Pull from Docker Hub:
+```bash
+# Pull the pre-built image
+docker pull kcsoukup/asus-merlin-mcp:v1.0.0
+
+# Run directly with Docker
+docker run -it --rm \
+  -v ~/.ssh:/root/.ssh:ro \
+  -e ROUTER_HOST=192.168.1.1 \
+  -e ROUTER_PORT=22 \
+  -e ROUTER_USER=admin \
+  -e ROUTER_KEY_FILE=/root/.ssh/id_rsa \
+  kcsoukup/asus-merlin-mcp:v1.0.0
+```
+
+#### Build from Source (Alternative):
+
 1. **Build the Docker image:**
    ```bash
    docker build -t asus-merlin-mcp .
@@ -99,6 +120,22 @@ pip3 install podman-compose
 
 ### Option 3: Podman Installation
 
+#### Quick Start - Pull from Docker Hub:
+```bash
+# Pull the pre-built image
+podman pull kcsoukup/asus-merlin-mcp:v1.0.0
+
+# Run directly with Podman
+podman run -it --rm \
+  -v ~/.ssh:/root/.ssh:ro \
+  -e ROUTER_HOST=192.168.1.1 \
+  -e ROUTER_PORT=22 \
+  -e ROUTER_USER=admin \
+  -e ROUTER_KEY_FILE=/root/.ssh/id_rsa \
+  kcsoukup/asus-merlin-mcp:v1.0.0
+```
+
+#### Build from Source (Alternative):
 ```bash
 # Build with Podman
 podman build -t asus-merlin-mcp .
@@ -165,7 +202,7 @@ MCP servers are automatically configured in `~/.claude.json` under your project 
             "-e", "ROUTER_PORT=22",
             "-e", "ROUTER_USER=admin",
             "-e", "ROUTER_KEY_FILE=/root/.ssh/id_rsa",
-            "asus-merlin-mcp"
+            "kcsoukup/asus-merlin-mcp:v1.0.0"
           ]
         }
       }
@@ -190,7 +227,7 @@ MCP servers are automatically configured in `~/.claude.json` under your project 
             "-e", "ROUTER_PORT=22",
             "-e", "ROUTER_USER=admin",
             "-e", "ROUTER_KEY_FILE=/root/.ssh/id_rsa",
-            "asus-merlin-mcp"
+            "kcsoukup/asus-merlin-mcp:v1.0.0"
           ]
         }
       }
@@ -236,7 +273,7 @@ MCP servers are automatically configured in `~/.claude.json` under your project 
         "-e", "ROUTER_PORT=22",
         "-e", "ROUTER_USER=admin",
         "-e", "ROUTER_KEY_FILE=/root/.ssh/id_rsa",
-        "asus-merlin-mcp"
+        "kcsoukup/asus-merlin-mcp:v1.0.0"
       ]
     }
   }
@@ -256,7 +293,7 @@ MCP servers are automatically configured in `~/.claude.json` under your project 
         "-e", "ROUTER_PORT=22",
         "-e", "ROUTER_USER=admin",
         "-e", "ROUTER_KEY_FILE=/root/.ssh/id_rsa",
-        "asus-merlin-mcp"
+        "kcsoukup/asus-merlin-mcp:v1.0.0"
       ]
     }
   }
@@ -303,7 +340,7 @@ MCP servers are automatically configured in `~/.claude.json` under your project 
         "-e", "ROUTER_PORT=22",
         "-e", "ROUTER_USER=admin",
         "-e", "ROUTER_KEY_FILE=/root/.ssh/id_rsa",
-        "asus-merlin-mcp"
+        "kcsoukup/asus-merlin-mcp:v1.0.0"
       ]
     }
   }
@@ -323,7 +360,7 @@ MCP servers are automatically configured in `~/.claude.json` under your project 
         "-e", "ROUTER_PORT=22",
         "-e", "ROUTER_USER=admin",
         "-e", "ROUTER_KEY_FILE=/root/.ssh/id_rsa",
-        "asus-merlin-mcp"
+        "kcsoukup/asus-merlin-mcp:v1.0.0"
       ]
     }
   }
