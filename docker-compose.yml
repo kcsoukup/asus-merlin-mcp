@@ -15,8 +15,8 @@ services:
       - ROUTER_PORT=22
       - ROUTER_USER=admin
       # Use either password OR key file (key file is more secure)
-      - ROUTER_PASSWORD=your_password_here
-      # - ROUTER_KEY_FILE=/root/.ssh/id_rsa
+      # - ROUTER_PASSWORD=your_password_here
+      - ROUTER_KEY_FILE=/root/.ssh/id_rsa
     stdin_open: true
     tty: true
     restart: unless-stopped
