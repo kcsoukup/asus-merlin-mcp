@@ -6,17 +6,73 @@ Model Context Protocol (MCP) server for managing ASUS routers running Asuswrt-Me
 ![Docker Image Version](https://img.shields.io/docker/v/kcsoukup/asus-merlin-mcp?sort=semver)
 ![Docker Image Size](https://img.shields.io/docker/image-size/kcsoukup/asus-merlin-mcp)
 
+---
+
+## 🚨 BREAKING CHANGE - v3.x Security Update
+
+**Docker containers now run as rootless (non-root user `mcpuser`) for enhanced security.**
+
+**If upgrading from v1.0.0 to v3.x, you MUST update your MCP configuration with TWO changes:**
+
+| Component | v1.0.0 (Deprecated) | v3.x (Current) |
+|-----------|---------------------|----------------|
+| Container User | `root` | `mcpuser` (UID 1000) |
+| Volume Mount | `~/.ssh:/root/.ssh:ro` | `~/.ssh:/home/mcpuser/.ssh:ro` |
+| SSH Key Path | `/root/.ssh/id_rsa` | `/home/mcpuser/.ssh/id_rsa` |
+
+**Required Changes:**
+
+1. **Update Volume Mount** in Docker args:
+   ```json
+   "-v", "~/.ssh:/home/mcpuser/.ssh:ro"  // Changed from /root/.ssh
+   ```
+
+2. **Update Environment Variable**:
+   ```json
+   "ROUTER_KEY_FILE": "/home/mcpuser/.ssh/id_rsa"  // Changed from /root/.ssh/id_rsa
+   ```
+
+**Complete MCP Configuration Example:**
+```json
+{
+  "mcpServers": {
+    "asus-router": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "-v", "/home/yourusername/.ssh:/home/mcpuser/.ssh:ro",
+        "-e", "ROUTER_HOST=192.168.1.1",
+        "-e", "ROUTER_USER=admin",
+        "-e", "ROUTER_KEY_FILE=/home/mcpuser/.ssh/id_rsa",
+        "kcsoukup/asus-merlin-mcp:latest"
+      ]
+    }
+  }
+}
+```
+
+**Security Benefits:**
+- ✅ Follows Docker security best practices (rootless containers)
+- ✅ Reduces attack surface by running as non-privileged user
+- ✅ Prevents privilege escalation vulnerabilities
+
+---
+
 ## Features
 
-- **System Information**: Get router uptime, memory, CPU, firmware version
-- **Device Management**: List connected devices
-- **WiFi Control**: Check WiFi status across all radios
-- **Service Management**: Restart services (wireless, VPN, etc.)
-- **NVRAM Operations**: Read/write router configuration variables
-- **File Operations**: Upload/download files via SCP
-- **VPN Management**: Check VPN status
-- **Process Monitoring**: List running processes
-- **Custom Commands**: Execute any SSH command
+This MCP server provides **47 tools** across 8 categories for comprehensive router management:
+
+- **System Information** (14 tools): Router info, device lists, WiFi status, services, NVRAM, file operations, processes
+- **Firewall Management** (2 tools): Configure firewall settings and VPN passthrough
+- **URL/Keyword Filtering** (9 tools): Global URL/keyword content filtering
+- **Network Service Filtering** (6 tools): Block/allow services by IP/port/protocol with scheduling (NEW in v3.0)
+- **MAC Filtering** (3 tools): Add/remove/list WiFi access control rules
+- **DHCP Management** (3 tools): Add/remove/list static IP reservations
+- **Internet Access Control** (2 tools): Block/unblock devices (parental controls)
+- **VPN Routing Policy** (3 tools): Route devices through VPN clients (Asuswrt-Merlin only)
+- **VPN Server Monitoring** (2 tools): Monitor VPN server status and users
+
+For detailed example prompts for each tool, see **[TOOLS_PROMPTS.md](TOOLS_PROMPTS.md)**
 
 ## Prerequisites
 
@@ -45,12 +101,8 @@ Model Context Protocol (MCP) server for managing ASUS routers running Asuswrt-Me
 sudo apt update
 sudo apt install python3 python3-pip python3-venv
 
-# Optional: Install Docker/Podman for containerized deployment
+# Optional: Install Docker for containerized deployment
 sudo apt install docker.io docker-compose
-# OR
-sudo apt install podman podman-compose
-# OR
-pip3 install podman-compose
 ```
 
 ## Installation
@@ -91,18 +143,11 @@ pip3 install podman-compose
 
 #### Quick Start - Pull from Docker Hub:
 ```bash
-# Pull the pre-built image
-docker pull kcsoukup/asus-merlin-mcp:v1.0.0
-
-# Run directly with Docker
-docker run -it --rm \
-  -v ~/.ssh:/root/.ssh:ro \
-  -e ROUTER_HOST=192.168.1.1 \
-  -e ROUTER_PORT=22 \
-  -e ROUTER_USER=admin \
-  -e ROUTER_KEY_FILE=/root/.ssh/id_rsa \
-  kcsoukup/asus-merlin-mcp:v1.0.0
+# Pull the pre-built image (use :latest for current version or specific version tag)
+docker pull kcsoukup/asus-merlin-mcp:latest
 ```
+
+**Available versions:** `v1.0.0`, `v3.0`, `latest`
 
 #### Build from Source (Alternative):
 
@@ -112,46 +157,14 @@ docker run -it --rm \
    ```
 
 2. **Edit docker-compose.yml with your router credentials**
+   ```bash
+   # Optional -- The credentials are passed to the container via the MCP configurations in Claude or other chatbots.
+   ```
 
 3. **Run with Docker Compose:**
    ```bash
    docker-compose up -d
    ```
-
-### Option 3: Podman Installation
-
-#### Quick Start - Pull from Docker Hub:
-```bash
-# Pull the pre-built image
-podman pull kcsoukup/asus-merlin-mcp:v1.0.0
-
-# Run directly with Podman
-podman run -it --rm \
-  -v ~/.ssh:/root/.ssh:ro \
-  -e ROUTER_HOST=192.168.1.1 \
-  -e ROUTER_PORT=22 \
-  -e ROUTER_USER=admin \
-  -e ROUTER_KEY_FILE=/root/.ssh/id_rsa \
-  kcsoukup/asus-merlin-mcp:v1.0.0
-```
-
-#### Build from Source (Alternative):
-```bash
-# Build with Podman
-podman build -t asus-merlin-mcp .
-
-# Run with Podman Compose
-podman-compose up -d
-
-# Or run directly
-podman run -it --rm \
-  -v ~/.ssh:/root/.ssh:ro \
-  -e ROUTER_HOST=192.168.1.1 \
-  -e ROUTER_PORT=22 \
-  -e ROUTER_USER=admin \
-  -e ROUTER_KEY_FILE=/root/.ssh/id_rsa \
-  asus-merlin-mcp
-```
 
 ## Claude Configuration
 
@@ -197,37 +210,12 @@ MCP servers are automatically configured in `~/.claude.json` under your project 
           "command": "docker",
           "args": [
             "run", "-i", "--rm",
-            "-v", "/home/yourusername/.ssh:/root/.ssh:ro",
+            "-v", "/home/yourusername/.ssh:/home/mcpuser/.ssh:ro",
             "-e", "ROUTER_HOST=192.168.1.1",
             "-e", "ROUTER_PORT=22",
             "-e", "ROUTER_USER=admin",
-            "-e", "ROUTER_KEY_FILE=/root/.ssh/id_rsa",
-            "kcsoukup/asus-merlin-mcp:v1.0.0"
-          ]
-        }
-      }
-    }
-  }
-}
-```
-
-#### For Podman Installation:
-```json
-{
-  "installMethod": "native",
-  "projects": {
-    "/path/to/asus-merlin-mcp": {
-      "mcpServers": {
-        "asus-router": {
-          "command": "podman",
-          "args": [
-            "run", "-i", "--rm",
-            "-v", "/home/yourusername/.ssh:/root/.ssh:ro",
-            "-e", "ROUTER_HOST=192.168.1.1",
-            "-e", "ROUTER_PORT=22",
-            "-e", "ROUTER_USER=admin",
-            "-e", "ROUTER_KEY_FILE=/root/.ssh/id_rsa",
-            "kcsoukup/asus-merlin-mcp:v1.0.0"
+            "-e", "ROUTER_KEY_FILE=/home/mcpuser/.ssh/id_rsa",
+            "kcsoukup/asus-merlin-mcp:latest"
           ]
         }
       }
@@ -268,32 +256,12 @@ MCP servers are automatically configured in `~/.claude.json` under your project 
       "command": "docker",
       "args": [
         "run", "-i", "--rm",
-        "-v", "/home/yourusername/.ssh:/root/.ssh:ro",
+        "-v", "/home/yourusername/.ssh:/home/mcpuser/.ssh:ro",
         "-e", "ROUTER_HOST=192.168.1.1",
         "-e", "ROUTER_PORT=22",
         "-e", "ROUTER_USER=admin",
-        "-e", "ROUTER_KEY_FILE=/root/.ssh/id_rsa",
-        "kcsoukup/asus-merlin-mcp:v1.0.0"
-      ]
-    }
-  }
-}
-```
-
-#### For Podman Installation:
-```json
-{
-  "mcpServers": {
-    "asus-router": {
-      "command": "podman",
-      "args": [
-        "run", "-i", "--rm",
-        "-v", "/home/yourusername/.ssh:/root/.ssh:ro",
-        "-e", "ROUTER_HOST=192.168.1.1",
-        "-e", "ROUTER_PORT=22",
-        "-e", "ROUTER_USER=admin",
-        "-e", "ROUTER_KEY_FILE=/root/.ssh/id_rsa",
-        "kcsoukup/asus-merlin-mcp:v1.0.0"
+        "-e", "ROUTER_KEY_FILE=/home/mcpuser/.ssh/id_rsa",
+        "kcsoukup/asus-merlin-mcp:latest"
       ]
     }
   }
@@ -305,9 +273,9 @@ MCP servers are automatically configured in `~/.claude.json` under your project 
 ### Claude Desktop
 
 **Config file locations:**
+- **Linux:** `~/.config/Claude/claude_desktop_config.json`
 - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
-- **Linux:** `~/.config/Claude/claude_desktop_config.json`
 
 #### For Local Installation:
 ```json
@@ -335,32 +303,12 @@ MCP servers are automatically configured in `~/.claude.json` under your project 
       "command": "docker",
       "args": [
         "run", "-i", "--rm",
-        "-v", "/home/yourusername/.ssh:/root/.ssh:ro",
+        "-v", "/home/yourusername/.ssh:/home/mcpuser/.ssh:ro",
         "-e", "ROUTER_HOST=192.168.1.1",
         "-e", "ROUTER_PORT=22",
         "-e", "ROUTER_USER=admin",
-        "-e", "ROUTER_KEY_FILE=/root/.ssh/id_rsa",
-        "kcsoukup/asus-merlin-mcp:v1.0.0"
-      ]
-    }
-  }
-}
-```
-
-#### For Podman Installation:
-```json
-{
-  "mcpServers": {
-    "asus-router": {
-      "command": "podman",
-      "args": [
-        "run", "-i", "--rm",
-        "-v", "/home/yourusername/.ssh:/root/.ssh:ro",
-        "-e", "ROUTER_HOST=192.168.1.1",
-        "-e", "ROUTER_PORT=22",
-        "-e", "ROUTER_USER=admin",
-        "-e", "ROUTER_KEY_FILE=/root/.ssh/id_rsa",
-        "kcsoukup/asus-merlin-mcp:v1.0.0"
+        "-e", "ROUTER_KEY_FILE=/home/mcpuser/.ssh/id_rsa",
+        "kcsoukup/asus-merlin-mcp:latest"
       ]
     }
   }
@@ -388,21 +336,58 @@ Once configured in Claude Desktop, you can interact with your router:
 
 ## Available Tools
 
+For detailed example prompts, see **[TOOLS_PROMPTS.md](TOOLS_PROMPTS.md)**
+
+### System Information Tools (14)
 | Tool | Description |
 |------|-------------|
 | `get_router_info` | System info (uptime, memory, firmware) |
 | `get_connected_devices` | List DHCP clients |
+| `get_all_network_devices` | Comprehensive device list (DHCP + static + ARP) |
 | `get_wifi_status` | WiFi status for all radios |
 | `restart_service` | Restart specific service |
 | `reboot_router` | Reboot router (requires confirmation) |
+| `get_vpn_status` | Check VPN client/server status |
+| `list_processes` | Show running processes |
 | `get_nvram_variable` | Read NVRAM variable |
 | `set_nvram_variable` | Write NVRAM variable |
 | `execute_command` | Run custom SSH command |
 | `read_file` | Read file from router |
-| `upload_file` | Upload file (tries SFTP, falls back to shell if unavailable) |
-| `download_file` | Download file (tries SFTP, falls back to shell if unavailable) |
-| `get_vpn_status` | Check VPN status |
-| `list_processes` | Show running processes |
+| `upload_file` | Upload file (MD5 verified) |
+| `download_file` | Download file (MD5 verified) |
+
+### MAC Filtering Tools (3)
+| Tool | Description |
+|------|-------------|
+| `add_mac_filter` | Add device to MAC filter (whitelist/blacklist) |
+| `remove_mac_filter` | Remove device from MAC filter |
+| `list_mac_filters` | Show current MAC filters |
+
+### DHCP Management Tools (3)
+| Tool | Description |
+|------|-------------|
+| `add_dhcp_reservation` | Reserve IP for MAC address (static lease) |
+| `remove_dhcp_reservation` | Remove DHCP reservation |
+| `list_dhcp_reservations` | Show all DHCP reservations |
+
+### Internet Access Control Tools (2)
+| Tool | Description |
+|------|-------------|
+| `block_device_internet` | Block/unblock device internet (parental controls) |
+| `list_blocked_devices` | Show blocked devices |
+
+### VPN Routing Policy Tools (3)
+| Tool | Description |
+|------|-------------|
+| `add_vpn_routing_policy` | Route device through VPN client |
+| `remove_vpn_routing_policy` | Remove device from VPN routing |
+| `list_vpn_policies` | Show all VPN routing policies |
+
+### VPN Server Monitoring Tools (2)
+| Tool | Description |
+|------|-------------|
+| `get_vpn_server_status` | VPN server status and connected clients |
+| `get_vpn_server_users` | List authorized VPN server users |
 
 ## Common Services to Restart
 
@@ -451,7 +436,7 @@ source venv/bin/activate
 pip install -r requirements.txt --force-reinstall
 ```
 
-### Volume Mount Errors (Docker/Podman)
+### Volume Mount Errors (Docker)
 If you see an error like:
 ```
 Error: error creating named volume "${HOME}/.keys":
@@ -463,10 +448,10 @@ error running volume create option: names must match [a-zA-Z0-9][a-zA-Z0-9_.-]*:
 **Solution:** Replace `${HOME}` with your actual home directory path in the configuration:
 ```json
 // Wrong - will not work:
-"-v", "${HOME}/.ssh:/root/.ssh:ro"
+"-v", "${HOME}/.ssh:/home/mcpuser/.ssh:ro"
 
 // Correct - use absolute path:
-"-v", "/home/triskull/.ssh:/root/.ssh:ro"
+"-v", "/home/triskull/.ssh:/home/mcpuser/.ssh:ro"
 ```
 
 To find your home directory:
@@ -522,18 +507,7 @@ The router's custom hosts file (`/jffs/configs/hosts.add`) allows you to add sta
    ```
    *Uses: `restart_service` with `service_name: dnsmasq`*
 
-**Option 2: Direct Command**
-
-Via Claude:
-```
-"Execute this command on the router: echo '192.168.0.100    newserver.damage.inc    newserver' >> /jffs/configs/hosts.add"
-```
-*Uses: `execute_command` tool*
-
-Then restart dnsmasq:
-```
-"Restart the dnsmasq service"
-```
+**⚠️ WARNING:** Do NOT use `execute_command` with echo/heredoc for file operations. Always use the download → edit → upload workflow shown above for file safety and MD5 verification.
 
 #### Update an Existing Host Entry
 

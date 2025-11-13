@@ -11,270 +11,86 @@ ___  ____  _____   ____  _____ ____ _ __ _____
   Project  : MCP Server for ASUS Router
   Purpose  : Use AI Agents for managing ASUS routers running Asuswrt-Merlin firmware via SSH/SCP.
 <=================================[10/08/2025]=>
-  Asuswrt-Merlin Firmware Home -- https://www.asuswrt-merlin.net/
+  Home:  Asuswrt-Merlin Firmware  --  https://www.asuswrt-merlin.net/
+  Help:  SNBForums ASUS WiFi      --  https://www.snbforums.com/forums/asus-wi-fi.37/
 """
 
 __project__ = "MCP Server for ASUS Router"
-__version__ = "1.0"
+__version__ = "3.0.1"
 __author__ = "Ken C. Soukup"
 __company__ = "Vigorous Programming"
 __minted__ = "2025"
 
 import asyncio
 import logging
-from typing import Any, Sequence, Optional
-import paramiko
-from mcp.server import Server
-from mcp.types import Tool, TextContent, ImageContent, EmbeddedResource
+from typing import Any, Sequence
+
 import mcp.server.stdio
-import os
+from mcp.server import Server
+from mcp.types import EmbeddedResource, ImageContent, TextContent, Tool
+
+# Import configuration
+from config.router_config import ROUTER_CONFIG
+
+# Import core infrastructure
+from core.ssh_client import RouterSSHClient
+
+# Import all tool handlers
+from tools import (
+    handle_add_dhcp_reservation,
+    handle_add_keyword_filter,
+    handle_add_mac_filter,
+    handle_add_network_service_filter_rule,
+    handle_add_url_filter,
+    handle_add_vpn_routing_policy,
+    handle_block_device_internet,
+    handle_download_file,
+    handle_execute_command,
+    handle_get_aiprotection_status,
+    handle_get_all_network_devices,
+    handle_get_connected_devices,
+    handle_get_firewall_status,
+    handle_get_keyword_filter_status,
+    handle_get_network_service_filter_status,
+    handle_get_nvram_variable,
+    handle_get_router_info,
+    handle_get_system_log,
+    handle_get_url_filter_status,
+    handle_get_vpn_server_status,
+    handle_get_vpn_server_users,
+    handle_get_vpn_status,
+    handle_get_wifi_status,
+    handle_list_blocked_devices,
+    handle_list_dhcp_reservations,
+    handle_list_keyword_filters,
+    handle_list_mac_filters,
+    handle_list_network_service_filter_rules,
+    handle_list_processes,
+    handle_list_url_filters,
+    handle_list_vpn_policies,
+    handle_read_file,
+    handle_reboot_router,
+    handle_remove_dhcp_reservation,
+    handle_remove_keyword_filter,
+    handle_remove_mac_filter,
+    handle_remove_network_service_filter_rule,
+    handle_remove_url_filter,
+    handle_remove_vpn_routing_policy,
+    handle_restart_service,
+    handle_set_firewall_config,
+    handle_set_network_service_filter_mode,
+    handle_set_network_service_filter_schedule,
+    handle_set_nvram_variable,
+    handle_set_system_log_config,
+    handle_set_url_filter_mode,
+    handle_upload_file,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("asus-merlin-mcp")
 
-# Router connection configuration
-ROUTER_CONFIG = {
-    "host": os.getenv("ROUTER_HOST", "192.168.1.1"),
-    "port": int(os.getenv("ROUTER_PORT", "22")),
-    "username": os.getenv("ROUTER_USER", "admin"),
-    "password": os.getenv("ROUTER_PASSWORD", ""),
-    "key_file": os.getenv("ROUTER_KEY_FILE", ""),
-}
-
-
-class RouterSSHClient:
-    """Handles SSH connections to the ASUS router"""
-
-    def __init__(self, config: dict):
-        self.config = config
-        self.client: Optional[paramiko.SSHClient] = None
-
-    def connect(self):
-        """Establish SSH connection to router"""
-        try:
-            self.client = paramiko.SSHClient()
-            self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
-            # Use key-based auth if key file provided, otherwise password
-            if self.config["key_file"] and os.path.exists(self.config["key_file"]):
-                self.client.connect(
-                    hostname=self.config["host"],
-                    port=self.config["port"],
-                    username=self.config["username"],
-                    key_filename=self.config["key_file"],
-                    timeout=10,
-                )
-            else:
-                self.client.connect(
-                    hostname=self.config["host"],
-                    port=self.config["port"],
-                    username=self.config["username"],
-                    password=self.config["password"],
-                    timeout=10,
-                )
-            logger.info(f"Connected to router at {self.config['host']}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to connect to router: {e}")
-            return False
-
-    def execute_command(self, command: str) -> tuple[str, str, int]:
-        """Execute a command on the router"""
-        if not self.client:
-            if not self.connect():
-                return "", "Failed to connect to router", 1
-
-        assert self.client is not None  # Type narrowing for Pylance
-        try:
-            _stdin, stdout, stderr = self.client.exec_command(command, timeout=30)
-            exit_code = stdout.channel.recv_exit_status()
-            output = stdout.read().decode("utf-8", errors="replace")
-            error = stderr.read().decode("utf-8", errors="replace")
-            return output, error, exit_code
-        except Exception as e:
-            logger.error(f"Command execution failed: {e}")
-            return "", str(e), 1
-
-    def upload_file(self, local_path: str, remote_path: str) -> tuple[bool, str]:
-        """Upload file to router via SCP"""
-        if not self.client:
-            if not self.connect():
-                return False, "Failed to connect to router"
-
-        assert self.client is not None  # Type narrowing for Pylance
-        try:
-            sftp = self.client.open_sftp()
-            sftp.put(local_path, remote_path)
-            sftp.close()
-            logger.info(f"Uploaded {local_path} to {remote_path}")
-            return True, "SFTP upload successful"
-        except Exception as e:
-            error_msg = f"SFTP upload failed: {type(e).__name__}: {str(e)}"
-            logger.error(error_msg)
-            return False, error_msg
-
-    def download_file(self, remote_path: str, local_path: str) -> tuple[bool, str]:
-        """Download file from router via SCP"""
-        if not self.client:
-            if not self.connect():
-                return False, "Failed to connect to router"
-
-        assert self.client is not None  # Type narrowing for Pylance
-        try:
-            sftp = self.client.open_sftp()
-            sftp.get(remote_path, local_path)
-            sftp.close()
-            logger.info(f"Downloaded {remote_path} to {local_path}")
-            return True, "SFTP download successful"
-        except Exception as e:
-            error_msg = f"SFTP download failed: {type(e).__name__}: {str(e)}"
-            logger.error(error_msg)
-            return False, error_msg
-
-    def upload_file_shell(self, local_path: str, remote_path: str) -> tuple[bool, str]:
-        """Upload file to router using shell commands (fallback when SFTP unavailable)"""
-        try:
-            import hashlib
-
-            # Read local file and calculate checksum
-            with open(local_path, "rb") as f:
-                content = f.read()
-            local_md5 = hashlib.md5(content).hexdigest()
-
-            # Convert to hex string
-            hex_content = content.hex()
-
-            # Split into chunks to avoid command line length limits (4000 chars per chunk)
-            chunk_size = 4000
-            chunks = [
-                hex_content[i : i + chunk_size]
-                for i in range(0, len(hex_content), chunk_size)
-            ]
-
-            # Clear/create the file first
-            output, error, code = self.execute_command(f"> {remote_path}")
-            if code != 0:
-                error_msg = f"Shell upload failed to create file: {error}"
-                logger.error(error_msg)
-                return False, error_msg
-
-            # Upload in chunks using printf with hex escape sequences
-            for i, chunk in enumerate(chunks):
-                # Convert hex pairs to \x escape sequences for printf
-                escaped = "".join(
-                    f"\\x{chunk[j : j + 2]}" for j in range(0, len(chunk), 2)
-                )
-                cmd = f"printf '{escaped}' >> {remote_path}"
-                output, error, code = self.execute_command(cmd)
-
-                if code != 0:
-                    error_msg = (
-                        f"Shell upload failed at chunk {i + 1}/{len(chunks)}: {error}"
-                    )
-                    logger.error(error_msg)
-                    return False, error_msg
-
-            # Verify upload with size and checksum
-            verify_output, _, verify_code = self.execute_command(
-                f"test -f {remote_path} && wc -c < {remote_path} && md5sum {remote_path}"
-            )
-            if verify_code == 0:
-                lines = verify_output.strip().split("\n")
-                remote_size = int(lines[0].strip())
-                remote_md5 = lines[1].split()[0] if len(lines) > 1 else ""
-
-                if remote_size != len(content):
-                    error_msg = f"Shell upload size mismatch: expected {len(content)}, got {remote_size}"
-                    logger.error(error_msg)
-                    return False, error_msg
-
-                if remote_md5 and remote_md5 != local_md5:
-                    error_msg = f"Shell upload checksum mismatch: expected {local_md5}, got {remote_md5}"
-                    logger.error(error_msg)
-                    return False, error_msg
-
-                logger.info(
-                    f"Uploaded {local_path} to {remote_path} via shell ({len(content)} bytes, MD5: {local_md5})"
-                )
-                return (
-                    True,
-                    f"Shell-based upload successful ({len(content)} bytes, MD5: {local_md5}, verified)",
-                )
-            else:
-                error_msg = "Shell upload verification failed: file not found on router"
-                logger.error(error_msg)
-                return False, error_msg
-
-        except Exception as e:
-            error_msg = f"Shell upload failed: {type(e).__name__}: {str(e)}"
-            logger.error(error_msg)
-            return False, error_msg
-
-    def download_file_shell(
-        self, remote_path: str, local_path: str
-    ) -> tuple[bool, str]:
-        """Download file from router using shell commands (fallback when SFTP unavailable)"""
-        try:
-            import hashlib
-
-            # Get remote file checksum first
-            md5_output, _, md5_code = self.execute_command(f"md5sum {remote_path}")
-            remote_md5 = ""
-            if md5_code == 0:
-                remote_md5 = md5_output.split()[0]
-
-            # Use hexdump to get binary-safe output from router
-            output, error, code = self.execute_command(
-                f"hexdump -v -e '/1 \"%02x\"' {remote_path}"
-            )
-
-            if code != 0:
-                error_msg = f"Shell download failed: {error}"
-                logger.error(error_msg)
-                return False, error_msg
-
-            # Convert hex string back to binary
-            try:
-                binary_data = bytes.fromhex(output.strip())
-            except ValueError as e:
-                error_msg = f"Shell download failed to decode hex data: {e}"
-                logger.error(error_msg)
-                return False, error_msg
-
-            # Calculate local checksum
-            local_md5 = hashlib.md5(binary_data).hexdigest()
-
-            # Verify checksum matches
-            if remote_md5 and local_md5 != remote_md5:
-                error_msg = f"Shell download checksum mismatch: expected {remote_md5}, got {local_md5}"
-                logger.error(error_msg)
-                return False, error_msg
-
-            # Write to local file in binary mode
-            with open(local_path, "wb") as f:
-                f.write(binary_data)
-
-            logger.info(
-                f"Downloaded {remote_path} to {local_path} via shell ({len(binary_data)} bytes, MD5: {local_md5})"
-            )
-            return (
-                True,
-                f"Shell-based download successful ({len(binary_data)} bytes, MD5: {local_md5}, verified)",
-            )
-        except Exception as e:
-            error_msg = f"Shell download failed: {type(e).__name__}: {str(e)}"
-            logger.error(error_msg)
-            return False, error_msg
-
-    def close(self):
-        """Close SSH connection"""
-        if self.client:
-            self.client.close()
-            self.client = None
-
-
-# Initialize MCP server
+# Initialize MCP server and router connection
 app = Server("asus-merlin-router")
 router = RouterSSHClient(ROUTER_CONFIG)
 
@@ -292,6 +108,21 @@ async def list_tools() -> list[Tool]:
             name="get_connected_devices",
             description="List all devices connected to the router (via DHCP)",
             inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="get_all_network_devices",
+            description="Get comprehensive list of all network devices (DHCP + static + ARP) with detailed info",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "filter_type": {
+                        "type": "string",
+                        "enum": ["all", "dhcp", "static", "reservation"],
+                        "description": "Filter by device type: 'all' (default), 'dhcp', 'static', or 'reservation'",
+                    }
+                },
+                "required": [],
+            },
         ),
         Tool(
             name="get_wifi_status",
@@ -362,7 +193,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="execute_command",
-            description="Execute a custom command on the router via SSH",
+            description="Execute a custom command on the router via SSH. WARNING: NEVER use this for file operations (reading, writing, editing files). ALWAYS use read_file, upload_file, or download_file tools for file operations. Do NOT use heredoc (cat << EOF) or echo for file writes - use upload_file instead.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -395,7 +226,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="upload_file",
-            description="Upload a file to the router via SCP",
+            description="Upload a file to the router via SCP with MD5 verification. Use this for creating or editing router files. Workflow: 1) download_file to get current content, 2) edit locally, 3) upload_file to save changes. NEVER use execute_command with heredoc for file edits.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -432,6 +263,65 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
+            name="get_aiprotection_status",
+            description="Get AiProtection (Trend Micro) security status including malicious sites blocking, two-way IPS, and infected device prevention",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="get_vpn_server_status",
+            description="Get detailed VPN server status including connected clients",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="get_vpn_server_users",
+            description="Get list of users authorized to connect to VPN servers",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="get_system_log",
+            description="Get system log entries from the router with optional filtering",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "lines": {
+                        "type": "integer",
+                        "description": "Number of lines to retrieve (default: 100, max: 1000)",
+                    },
+                    "filter": {
+                        "type": "string",
+                        "description": "Optional: grep filter pattern to match specific log entries",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="set_system_log_config",
+            description="Configure system log settings (log levels, remote syslog server)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "message_loglevel": {
+                        "type": "string",
+                        "description": "Message log level: 0-7 or name (emergency/alert/critical/error/warning/notice/info/debug)",
+                    },
+                    "log_level": {
+                        "type": "string",
+                        "description": "Urgency level: 0-8 or name (emergency/alert/critical/error/warning/notice/info/debug/all)",
+                    },
+                    "log_ipaddr": {
+                        "type": "string",
+                        "description": "Remote syslog server IP address (empty string to disable)",
+                    },
+                    "log_port": {
+                        "type": "integer",
+                        "description": "Remote syslog server port (default: 514)",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        Tool(
             name="list_processes",
             description="List running processes on the router",
             inputSchema={
@@ -445,6 +335,502 @@ async def list_tools() -> list[Tool]:
                 "required": [],
             },
         ),
+        # Firewall Tools
+        Tool(
+            name="get_firewall_status",
+            description="Get comprehensive firewall status and configuration including main firewall, DoS protection, logging, WAN ping response, VPN passthrough settings, and IPv6 firewall",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="set_firewall_config",
+            description="Configure firewall settings including enable/disable main firewall, DoS protection, logging mode, WAN ping response, IPv6 firewall, and VPN passthrough protocols (PPTP, L2TP, IPSec, RTSP, H.323, SIP, PPPoE)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "enable_firewall": {
+                        "type": "boolean",
+                        "description": "Enable/disable main firewall",
+                    },
+                    "enable_dos_protection": {
+                        "type": "boolean",
+                        "description": "Enable/disable DoS protection",
+                    },
+                    "log_mode": {
+                        "type": "string",
+                        "enum": ["none", "drop", "accept", "both"],
+                        "description": "Firewall logging mode: none (disabled), drop (dropped packets only), accept (accepted packets only), both (all packets)",
+                    },
+                    "respond_to_wan_ping": {
+                        "type": "boolean",
+                        "description": "Respond to WAN ping requests (true=visible, false=stealthed)",
+                    },
+                    "enable_ipv6_firewall": {
+                        "type": "boolean",
+                        "description": "Enable/disable IPv6 firewall",
+                    },
+                    "vpn_passthrough": {
+                        "type": "object",
+                        "description": "VPN passthrough protocol settings",
+                        "properties": {
+                            "pptp": {
+                                "type": "boolean",
+                                "description": "Enable/disable PPTP passthrough",
+                            },
+                            "l2tp": {
+                                "type": "boolean",
+                                "description": "Enable/disable L2TP passthrough",
+                            },
+                            "ipsec": {
+                                "type": "boolean",
+                                "description": "Enable/disable IPSec passthrough",
+                            },
+                            "rtsp": {
+                                "type": "boolean",
+                                "description": "Enable/disable RTSP passthrough",
+                            },
+                            "h323": {
+                                "type": "boolean",
+                                "description": "Enable/disable H.323 passthrough",
+                            },
+                            "sip": {
+                                "type": "boolean",
+                                "description": "Enable/disable SIP passthrough",
+                            },
+                            "pppoe_relay": {
+                                "type": "boolean",
+                                "description": "Enable/disable PPPoE relay",
+                            },
+                        },
+                    },
+                },
+                "required": [],
+            },
+        ),
+        # URL/Keyword Filtering Tools
+        Tool(
+            name="get_url_filter_status",
+            description="Get global URL filter status including enabled state, filter mode (blacklist/whitelist), number of rules, and schedule",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="add_url_filter",
+            description="Add URL pattern to global filter list (blacklist or whitelist depending on mode)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "url_pattern": {
+                        "type": "string",
+                        "description": "URL pattern/keyword to filter (e.g., 'facebook', 'gaming', 'youtube.com')",
+                    }
+                },
+                "required": ["url_pattern"],
+            },
+        ),
+        Tool(
+            name="remove_url_filter",
+            description="Remove URL pattern from global filter list",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "url_pattern": {
+                        "type": "string",
+                        "description": "URL pattern to remove from filter list",
+                    }
+                },
+                "required": ["url_pattern"],
+            },
+        ),
+        Tool(
+            name="list_url_filters",
+            description="List all configured URL filter rules with status and mode",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="set_url_filter_mode",
+            description="Set URL filter mode to blacklist (block listed URLs) or whitelist (allow only listed URLs)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["blacklist", "whitelist"],
+                        "description": "Filter mode: 'blacklist' blocks listed URLs, 'whitelist' allows only listed URLs",
+                    }
+                },
+                "required": ["mode"],
+            },
+        ),
+        Tool(
+            name="get_keyword_filter_status",
+            description="Get keyword filter status including enabled state, number of rules, and schedule",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="add_keyword_filter",
+            description="Add keyword to filter list (blocks URLs containing the keyword)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "keyword": {
+                        "type": "string",
+                        "description": "Keyword to block in URLs (e.g., 'facebook', 'game', 'video')",
+                    }
+                },
+                "required": ["keyword"],
+            },
+        ),
+        Tool(
+            name="remove_keyword_filter",
+            description="Remove keyword from filter list",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "keyword": {
+                        "type": "string",
+                        "description": "Keyword to remove from filter list",
+                    }
+                },
+                "required": ["keyword"],
+            },
+        ),
+        Tool(
+            name="list_keyword_filters",
+            description="List all configured keyword filter rules",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        # Network Service Filtering Tools
+        Tool(
+            name="get_network_service_filter_status",
+            description="Get network service filter status including deny list and allow list configuration, rules, and schedule",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="list_network_service_filter_rules",
+            description="List network service filter rules for deny or allow list",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "list_type": {
+                        "type": "string",
+                        "description": "Filter list type: 'deny' (black list) or 'allow' (white list)",
+                        "enum": ["deny", "allow"],
+                    }
+                },
+                "required": ["list_type"],
+            },
+        ),
+        Tool(
+            name="add_network_service_filter_rule",
+            description="Add network service filter rule to block/allow specific services by IP and port. Deny list blocks services during schedule. Allow list only allows services during schedule. Leave source IP blank to apply to all devices.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "list_type": {
+                        "type": "string",
+                        "description": "Filter list type: 'deny' (black list) or 'allow' (white list)",
+                        "enum": ["deny", "allow"],
+                    },
+                    "source_ip": {
+                        "type": "string",
+                        "description": "Source IP address (optional, blank = all LAN devices)",
+                    },
+                    "source_port": {
+                        "type": "string",
+                        "description": "Source port or range (optional)",
+                    },
+                    "dest_ip": {
+                        "type": "string",
+                        "description": "Destination IP address (optional)",
+                    },
+                    "dest_port": {
+                        "type": "string",
+                        "description": "Destination port or range (e.g., '80', '1:1024')",
+                    },
+                    "protocol": {
+                        "type": "string",
+                        "description": "Protocol: TCP, UDP, or specific TCP flags (TCPSYN, TCPACK, etc.)",
+                        "enum": [
+                            "TCP",
+                            "UDP",
+                            "TCPSYN",
+                            "TCPACK",
+                            "TCPFIN",
+                            "TCPRST",
+                            "TCPURG",
+                            "TCPPSH",
+                        ],
+                    },
+                },
+                "required": ["list_type", "dest_port"],
+            },
+        ),
+        Tool(
+            name="remove_network_service_filter_rule",
+            description="Remove network service filter rule by matching all criteria exactly",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "list_type": {
+                        "type": "string",
+                        "description": "Filter list type: 'deny' or 'allow'",
+                        "enum": ["deny", "allow"],
+                    },
+                    "source_ip": {
+                        "type": "string",
+                        "description": "Source IP (must match exactly)",
+                    },
+                    "source_port": {
+                        "type": "string",
+                        "description": "Source port (must match exactly)",
+                    },
+                    "dest_ip": {
+                        "type": "string",
+                        "description": "Destination IP (must match exactly)",
+                    },
+                    "dest_port": {
+                        "type": "string",
+                        "description": "Destination port (must match exactly)",
+                    },
+                    "protocol": {
+                        "type": "string",
+                        "description": "Protocol (must match exactly)",
+                    },
+                },
+                "required": ["list_type", "dest_port", "protocol"],
+            },
+        ),
+        Tool(
+            name="set_network_service_filter_mode",
+            description="Enable or disable network service filter deny/allow list",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "list_type": {
+                        "type": "string",
+                        "description": "Filter list type: 'deny' or 'allow'",
+                        "enum": ["deny", "allow"],
+                    },
+                    "enabled": {
+                        "type": "boolean",
+                        "description": "True to enable, False to disable",
+                    },
+                },
+                "required": ["list_type", "enabled"],
+            },
+        ),
+        Tool(
+            name="set_network_service_filter_schedule",
+            description="Configure network service filter schedule (active days and time ranges). Format: days as 7-digit string (Sun-Sat, 1=active), times in HHMM format (e.g., 0800 for 8:00 AM)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "list_type": {
+                        "type": "string",
+                        "description": "Filter list type: 'deny' or 'allow'",
+                        "enum": ["deny", "allow"],
+                    },
+                    "days": {
+                        "type": "string",
+                        "description": "7-character string (Sun-Sat), '1'=active, '0'=inactive. Example: '1111111' for all days",
+                    },
+                    "weekday_start": {
+                        "type": "string",
+                        "description": "Weekday start time in HHMM format (e.g., '0800' for 8:00 AM)",
+                    },
+                    "weekday_end": {
+                        "type": "string",
+                        "description": "Weekday end time in HHMM format (e.g., '1700' for 5:00 PM)",
+                    },
+                    "weekend_start": {
+                        "type": "string",
+                        "description": "Weekend start time (optional, defaults to weekday_start)",
+                    },
+                    "weekend_end": {
+                        "type": "string",
+                        "description": "Weekend end time (optional, defaults to weekday_end)",
+                    },
+                },
+                "required": ["list_type", "days", "weekday_start", "weekday_end"],
+            },
+        ),
+        # MAC Filtering Tools
+        Tool(
+            name="add_mac_filter",
+            description="Add device to MAC filter (whitelist or blacklist) for WiFi access control",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "mac_address": {
+                        "type": "string",
+                        "description": "Device MAC address (format: XX:XX:XX:XX:XX:XX)",
+                    },
+                    "filter_type": {
+                        "type": "string",
+                        "enum": ["whitelist", "blacklist"],
+                        "description": "Filter type: 'whitelist' (allow only) or 'blacklist' (deny only)",
+                        "default": "blacklist",
+                    },
+                    "radio": {
+                        "type": "string",
+                        "enum": ["2.4ghz", "5ghz", "both"],
+                        "description": "Radio band to apply filter: '2.4ghz', '5ghz', or 'both'",
+                        "default": "both",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Optional human-readable device description",
+                    },
+                },
+                "required": ["mac_address"],
+            },
+        ),
+        Tool(
+            name="remove_mac_filter",
+            description="Remove device from MAC filter",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "mac_address": {
+                        "type": "string",
+                        "description": "Device MAC address to remove",
+                    },
+                    "radio": {
+                        "type": "string",
+                        "enum": ["2.4ghz", "5ghz", "both"],
+                        "description": "Radio band to remove from: '2.4ghz', '5ghz', or 'both'",
+                        "default": "both",
+                    },
+                },
+                "required": ["mac_address"],
+            },
+        ),
+        Tool(
+            name="list_mac_filters",
+            description="Show current MAC filters with friendly formatting",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        # DHCP Management Tools
+        Tool(
+            name="add_dhcp_reservation",
+            description="Reserve IP address for specific MAC address (static DHCP lease)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "mac_address": {
+                        "type": "string",
+                        "description": "Device MAC address",
+                    },
+                    "ip_address": {
+                        "type": "string",
+                        "description": "IP address to reserve",
+                    },
+                    "dns": {
+                        "type": "string",
+                        "description": "DNS server (optional)",
+                    },
+                    "hostname": {
+                        "type": "string",
+                        "description": "Device hostname (optional)",
+                    },
+                },
+                "required": ["mac_address", "ip_address"],
+            },
+        ),
+        Tool(
+            name="remove_dhcp_reservation",
+            description="Remove DHCP reservation by MAC or IP address",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "mac_address": {
+                        "type": "string",
+                        "description": "Device MAC address (optional if ip_address provided)",
+                    },
+                    "ip_address": {
+                        "type": "string",
+                        "description": "IP address (optional if mac_address provided)",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="list_dhcp_reservations",
+            description="Show all current DHCP reservations",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        # Internet Access Control Tools
+        Tool(
+            name="block_device_internet",
+            description="Block or unblock device from internet access (parental controls)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "mac_address": {
+                        "type": "string",
+                        "description": "Device MAC address",
+                    },
+                    "enabled": {
+                        "type": "boolean",
+                        "description": "True to block internet access, False to unblock",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Optional device description",
+                    },
+                },
+                "required": ["mac_address", "enabled"],
+            },
+        ),
+        Tool(
+            name="list_blocked_devices",
+            description="Show devices with internet access restrictions",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        # VPN Policy Routing Tools (Asuswrt-Merlin only)
+        Tool(
+            name="add_vpn_routing_policy",
+            description="Route specific device through VPN client using VPN Director (Asuswrt-Merlin firmware only). Adds device to VPN Director routing to route all its traffic through selected VPN client (1-5). Requires Merlin firmware - stock ASUS firmware not supported.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "mac_address": {
+                        "type": "string",
+                        "description": "Device MAC address (format: XX:XX:XX:XX:XX:XX)",
+                    },
+                    "vpn_client_number": {
+                        "type": "integer",
+                        "description": "VPN client to route through (1-5)",
+                        "minimum": 1,
+                        "maximum": 5,
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Optional rule description/hostname",
+                    },
+                },
+                "required": ["mac_address", "vpn_client_number"],
+            },
+        ),
+        Tool(
+            name="remove_vpn_routing_policy",
+            description="Remove device from VPN Director routing (Asuswrt-Merlin firmware only). Device will return to normal routing (no VPN). Requires Merlin firmware - stock ASUS firmware not supported.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "mac_address": {
+                        "type": "string",
+                        "description": "Device MAC address to remove from VPN routing",
+                    },
+                },
+                "required": ["mac_address"],
+            },
+        ),
+        Tool(
+            name="list_vpn_policies",
+            description="List all VPN Director routing rules (Asuswrt-Merlin firmware only). Shows which devices are configured to route through which VPN clients. Requires Merlin firmware - stock ASUS firmware not supported.",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
     ]
 
 
@@ -452,192 +838,119 @@ async def list_tools() -> list[Tool]:
 async def call_tool(
     name: str, arguments: Any
 ) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
-    """Handle tool calls"""
+    """Route tool calls to appropriate handler functions"""
 
     try:
+        # System Info Tools
         if name == "get_router_info":
-            output, error, code = router.execute_command(
-                "echo '=== Uptime ==='; uptime; "
-                "echo '=== Memory ==='; free; "
-                "echo '=== Firmware ==='; nvram get firmver; nvram get buildno"
-            )
-            return [
-                TextContent(
-                    type="text", text=output if code == 0 else f"Error: {error}"
-                )
-            ]
-
+            return handle_get_router_info(router, arguments)
         elif name == "get_connected_devices":
-            output, error, code = router.execute_command(
-                "cat /var/lib/misc/dnsmasq.leases 2>/dev/null || arp -a"
-            )
-            return [
-                TextContent(
-                    type="text", text=output if code == 0 else f"Error: {error}"
-                )
-            ]
-
+            return handle_get_connected_devices(router, arguments)
+        elif name == "get_all_network_devices":
+            return handle_get_all_network_devices(router, arguments)
         elif name == "get_wifi_status":
-            output, error, code = router.execute_command(
-                "wl -i eth1 status 2>/dev/null; "
-                "wl -i eth2 status 2>/dev/null; "
-                "nvram get wl0_ssid; nvram get wl1_ssid"
-            )
-            return [
-                TextContent(
-                    type="text", text=output if code == 0 else f"Error: {error}"
-                )
-            ]
-
+            return handle_get_wifi_status(router, arguments)
         elif name == "restart_service":
-            service = arguments.get("service_name")
-            output, error, code = router.execute_command(f"service restart_{service}")
-            result = f"Service '{service}' restart command executed.\n{output}"
-            if error:
-                result += f"\nErrors: {error}"
-            return [TextContent(type="text", text=result)]
-
+            return handle_restart_service(router, arguments)
         elif name == "reboot_router":
-            if not arguments.get("confirm"):
-                return [
-                    TextContent(
-                        type="text", text="Reboot not confirmed. Set 'confirm' to true."
-                    )
-                ]
-            output, error, code = router.execute_command("service reboot")
-            return [
-                TextContent(
-                    type="text",
-                    text="Router reboot initiated. Connection will be lost.",
-                )
-            ]
-
-        elif name == "get_nvram_variable":
-            var = arguments.get("variable_name")
-            output, error, code = router.execute_command(f"nvram get {var}")
-            return [
-                TextContent(
-                    type="text", text=output.strip() if code == 0 else f"Error: {error}"
-                )
-            ]
-
-        elif name == "set_nvram_variable":
-            var = arguments.get("variable_name")
-            val = arguments.get("value")
-            commit = arguments.get("commit", False)
-
-            cmd = f"nvram set {var}='{val}'"
-            if commit:
-                cmd += " && nvram commit"
-
-            output, error, code = router.execute_command(cmd)
-            result = f"NVRAM variable '{var}' set to '{val}'"
-            if commit:
-                result += " and committed to permanent storage"
-            if error:
-                result += f"\nErrors: {error}"
-            return [TextContent(type="text", text=result)]
-
-        elif name == "execute_command":
-            cmd = arguments.get("command")
-            output, error, code = router.execute_command(cmd)
-            result = f"Command: {cmd}\n\nOutput:\n{output}"
-            if error:
-                result += f"\n\nErrors:\n{error}"
-            result += f"\n\nExit code: {code}"
-            return [TextContent(type="text", text=result)]
-
-        elif name == "read_file":
-            path = arguments.get("file_path")
-            max_lines = arguments.get("max_lines", 100)
-            output, error, code = router.execute_command(f"head -n {max_lines} {path}")
-            return [
-                TextContent(
-                    type="text", text=output if code == 0 else f"Error: {error}"
-                )
-            ]
-
-        elif name == "upload_file":
-            local = arguments.get("local_path")
-            remote = arguments.get("remote_path")
-
-            # Try SFTP first
-            success, message = router.upload_file(local, remote)
-
-            # If SFTP fails, try shell-based fallback
-            if not success and "SFTP" in message:
-                logger.info("SFTP unavailable, falling back to shell-based upload")
-                success, message = router.upload_file_shell(local, remote)
-                if success:
-                    result = f"✓ File uploaded successfully: {local} -> {remote}\n"
-                    result += (
-                        "Note: Used shell commands (SFTP not available on router)\n"
-                    )
-                    result += f"Details: {message}"
-                else:
-                    result = f"✗ File upload failed: {local} -> {remote}\n"
-                    result += f"Error: {message}"
-            elif success:
-                result = f"✓ File uploaded successfully: {local} -> {remote}\n"
-                result += "Method: SFTP\n"
-                result += f"Details: {message}"
-            else:
-                result = f"✗ File upload failed: {local} -> {remote}\n"
-                result += f"Error: {message}"
-
-            return [TextContent(type="text", text=result)]
-
-        elif name == "download_file":
-            remote = arguments.get("remote_path")
-            local = arguments.get("local_path")
-
-            # Try SFTP first
-            success, message = router.download_file(remote, local)
-
-            # If SFTP fails, try shell-based fallback
-            if not success and "SFTP" in message:
-                logger.info("SFTP unavailable, falling back to shell-based download")
-                success, message = router.download_file_shell(remote, local)
-                if success:
-                    result = f"✓ File downloaded successfully: {remote} -> {local}\n"
-                    result += (
-                        "Note: Used shell commands (SFTP not available on router)\n"
-                    )
-                    result += f"Details: {message}"
-                else:
-                    result = f"✗ File download failed: {remote} -> {local}\n"
-                    result += f"Error: {message}"
-            elif success:
-                result = f"✓ File downloaded successfully: {remote} -> {local}\n"
-                result += "Method: SFTP\n"
-                result += f"Details: {message}"
-            else:
-                result = f"✗ File download failed: {remote} -> {local}\n"
-                result += f"Error: {message}"
-
-            return [TextContent(type="text", text=result)]
-
+            return handle_reboot_router(router, arguments)
         elif name == "get_vpn_status":
-            output, error, code = router.execute_command(
-                "nvram get vpn_client1_state; "
-                "nvram get vpn_client2_state; "
-                "ps | grep vpn"
-            )
-            return [
-                TextContent(
-                    type="text", text=output if code == 0 else f"Error: {error}"
-                )
-            ]
-
+            return handle_get_vpn_status(router, arguments)
+        elif name == "get_aiprotection_status":
+            return handle_get_aiprotection_status(router, arguments)
+        elif name == "get_system_log":
+            return handle_get_system_log(router, arguments)
+        elif name == "set_system_log_config":
+            return handle_set_system_log_config(router, arguments)
         elif name == "list_processes":
-            filter_name = arguments.get("filter", "")
-            cmd = "ps" if not filter_name else f"ps | grep {filter_name}"
-            output, error, code = router.execute_command(cmd)
-            return [
-                TextContent(
-                    type="text", text=output if code == 0 else f"Error: {error}"
-                )
-            ]
+            return handle_list_processes(router, arguments)
+        elif name == "get_nvram_variable":
+            return handle_get_nvram_variable(router, arguments)
+        elif name == "set_nvram_variable":
+            return handle_set_nvram_variable(router, arguments)
+        elif name == "execute_command":
+            return handle_execute_command(router, arguments)
+        elif name == "read_file":
+            return handle_read_file(router, arguments)
+        elif name == "upload_file":
+            return handle_upload_file(router, arguments)
+        elif name == "download_file":
+            return handle_download_file(router, arguments)
+
+        # Firewall Tools
+        elif name == "get_firewall_status":
+            return handle_get_firewall_status(router, arguments)
+        elif name == "set_firewall_config":
+            return handle_set_firewall_config(router, arguments)
+
+        # MAC Filtering Tools
+        elif name == "add_mac_filter":
+            return handle_add_mac_filter(router, arguments)
+        elif name == "remove_mac_filter":
+            return handle_remove_mac_filter(router, arguments)
+        elif name == "list_mac_filters":
+            return handle_list_mac_filters(router, arguments)
+
+        # DHCP Management Tools
+        elif name == "add_dhcp_reservation":
+            return handle_add_dhcp_reservation(router, arguments)
+        elif name == "remove_dhcp_reservation":
+            return handle_remove_dhcp_reservation(router, arguments)
+        elif name == "list_dhcp_reservations":
+            return handle_list_dhcp_reservations(router, arguments)
+
+        # Internet Control Tools
+        elif name == "block_device_internet":
+            return handle_block_device_internet(router, arguments)
+        elif name == "list_blocked_devices":
+            return handle_list_blocked_devices(router, arguments)
+
+        # VPN Routing Tools
+        elif name == "add_vpn_routing_policy":
+            return handle_add_vpn_routing_policy(router, arguments)
+        elif name == "remove_vpn_routing_policy":
+            return handle_remove_vpn_routing_policy(router, arguments)
+        elif name == "list_vpn_policies":
+            return handle_list_vpn_policies(router, arguments)
+
+        # VPN Server Tools
+        elif name == "get_vpn_server_status":
+            return handle_get_vpn_server_status(router, arguments)
+        elif name == "get_vpn_server_users":
+            return handle_get_vpn_server_users(router, arguments)
+
+        # URL/Keyword Filtering Tools
+        elif name == "get_url_filter_status":
+            return handle_get_url_filter_status(router, arguments)
+        elif name == "add_url_filter":
+            return handle_add_url_filter(router, arguments)
+        elif name == "remove_url_filter":
+            return handle_remove_url_filter(router, arguments)
+        elif name == "list_url_filters":
+            return handle_list_url_filters(router, arguments)
+        elif name == "set_url_filter_mode":
+            return handle_set_url_filter_mode(router, arguments)
+        elif name == "get_keyword_filter_status":
+            return handle_get_keyword_filter_status(router, arguments)
+        elif name == "add_keyword_filter":
+            return handle_add_keyword_filter(router, arguments)
+        elif name == "remove_keyword_filter":
+            return handle_remove_keyword_filter(router, arguments)
+        elif name == "list_keyword_filters":
+            return handle_list_keyword_filters(router, arguments)
+        # Network Service Filtering
+        elif name == "get_network_service_filter_status":
+            return handle_get_network_service_filter_status(router, arguments)
+        elif name == "list_network_service_filter_rules":
+            return handle_list_network_service_filter_rules(router, arguments)
+        elif name == "add_network_service_filter_rule":
+            return handle_add_network_service_filter_rule(router, arguments)
+        elif name == "remove_network_service_filter_rule":
+            return handle_remove_network_service_filter_rule(router, arguments)
+        elif name == "set_network_service_filter_mode":
+            return handle_set_network_service_filter_mode(router, arguments)
+        elif name == "set_network_service_filter_schedule":
+            return handle_set_network_service_filter_schedule(router, arguments)
 
         else:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]

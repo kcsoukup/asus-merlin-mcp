@@ -4,6 +4,25 @@ A comprehensive guide to understanding and setting up Model Context Protocol (MC
 
 ---
 
+## 🚨 BREAKING CHANGE - v3.x Security Update
+
+**Docker containers now run as rootless (non-root user `mcpuser`) for enhanced security.**
+
+**If upgrading from v1.0.0 to v3.x, you MUST update TWO things in your MCP configuration:**
+
+| Component | v1.0.0 (Deprecated) | v3.x (Current) |
+|-----------|---------------------|----------------|
+| Volume Mount | `~/.ssh:/root/.ssh:ro` | `~/.ssh:/home/mcpuser/.ssh:ro` |
+| SSH Key Path | `/root/.ssh/id_rsa` | `/home/mcpuser/.ssh/id_rsa` |
+
+**Required Changes:**
+1. Update volume mount: `-v ~/.ssh:/home/mcpuser/.ssh:ro`
+2. Update environment variable: `ROUTER_KEY_FILE=/home/mcpuser/.ssh/id_rsa`
+
+See README.md for complete migration instructions with full configuration example.
+
+---
+
 ## Table of Contents
 
 1. [What is MCP?](#what-is-mcp)
@@ -25,7 +44,7 @@ A comprehensive guide to understanding and setting up Model Context Protocol (MC
 
 - **MCP Server**: A separate process that exposes tools/resources to Claude
 - **MCP Client**: Claude Code acts as the client, discovering and calling tools
-- **Tools**: Functions the MCP server provides (e.g., read file, query database, control router)
+- **Tools**: Functions the MCP server provides (e.g., read file, control router, manage network)
 - **Resources**: Data sources the server can provide (files, API responses, etc.)
 - **Prompts**: Pre-defined prompt templates the server can offer
 
@@ -47,8 +66,8 @@ A comprehensive guide to understanding and setting up Model Context Protocol (MC
 └────────┬────────┘
          │ JSON-RPC over stdio
          │
-    ┌────┴─────┬──────────┬──────────┐
-    │          │          │          │
+    ┌────┴────┬──────────┬──────────┐
+    │         │          │          │
 ┌───▼───┐  ┌──▼───┐  ┌───▼───┐  ┌───▼───┐
 │ MCP   │  │ MCP  │  │ MCP   │  │ MCP   │
 │Server │  │Server│  │Server │  │Server │
@@ -56,7 +75,8 @@ A comprehensive guide to understanding and setting up Model Context Protocol (MC
 └───┬───┘  └──┬───┘  └───┬───┘  └───┬───┘
     │         │          │          │
     ▼         ▼          ▼          ▼
-  Router   Database   Files    External API
+  Router    Files   External   Services
+                      API
 ```
 
 ### Communication Flow:
@@ -875,150 +895,6 @@ When things don't work, check in this order:
 4. **Read errors**: Error messages often point to exact issue
 5. **Search docs**: MCP documentation at modelcontextprotocol.io
 6. **Community**: Ask in MCP community forums/Discord
-
----
-
-## Example: Creating a Database MCP Server
-
-Let's walk through creating a PostgreSQL MCP server from scratch:
-
-### 1. Project Structure
-
-```
-postgres-mcp/
-├── server.py          # Main MCP server
-├── requirements.txt   # Dependencies
-├── .env.example       # Template for credentials
-└── README.md         # Documentation
-```
-
-### 2. Dependencies
-
-`requirements.txt`:
-```
-mcp
-psycopg2-binary
-```
-
-### 3. Server Implementation
-
-`server.py`:
-```python
-#!/usr/bin/env python3
-import asyncio
-import os
-import psycopg2
-from mcp.server import Server
-from mcp.types import Tool, TextContent
-import mcp.server.stdio
-
-# Configuration
-DB_CONFIG = {
-    "host": os.getenv("DB_HOST", "localhost"),
-    "port": int(os.getenv("DB_PORT", "5432")),
-    "database": os.getenv("DB_NAME", "postgres"),
-    "user": os.getenv("DB_USER", "postgres"),
-    "password": os.getenv("DB_PASSWORD", ""),
-}
-
-app = Server("postgres-db")
-
-def execute_query(query: str):
-    """Execute a SQL query and return results"""
-    conn = psycopg2.connect(**DB_CONFIG)
-    cur = conn.cursor()
-    cur.execute(query)
-
-    if cur.description:  # SELECT query
-        results = cur.fetchall()
-        columns = [desc[0] for desc in cur.description]
-        return {"columns": columns, "rows": results}
-    else:  # INSERT/UPDATE/DELETE
-        conn.commit()
-        return {"affected_rows": cur.rowcount}
-
-    cur.close()
-    conn.close()
-
-@app.list_tools()
-async def list_tools() -> list[Tool]:
-    return [
-        Tool(
-            name="query_database",
-            description="Execute a SQL query on the PostgreSQL database",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "SQL query to execute"
-                    }
-                },
-                "required": ["query"]
-            }
-        )
-    ]
-
-@app.call_tool()
-async def call_tool(name: str, arguments: dict):
-    if name == "query_database":
-        query = arguments.get("query")
-        try:
-            result = execute_query(query)
-            return [TextContent(type="text", text=str(result))]
-        except Exception as e:
-            return [TextContent(type="text", text=f"Error: {e}")]
-
-async def main():
-    async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-        await app.run(read_stream, write_stream, app.create_initialization_options())
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-### 4. Claude Code Configuration
-
-`~/.claude/settings.json`:
-```json
-{
-  "mcpServers": {
-    "postgres-db": {
-      "command": "/path/to/postgres-mcp/venv/bin/python",
-      "args": ["/path/to/postgres-mcp/server.py"],
-      "env": {
-        "DB_HOST": "localhost",
-        "DB_PORT": "5432",
-        "DB_NAME": "mydb",
-        "DB_USER": "dbuser",
-        "DB_PASSWORD": "dbpass"
-      }
-    }
-  }
-}
-```
-
-### 5. Setup and Test
-
-```bash
-cd postgres-mcp
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# Test manually
-export DB_HOST=localhost DB_NAME=mydb DB_USER=dbuser DB_PASSWORD=dbpass
-python server.py
-```
-
-### 6. Use with Claude
-
-After restarting Claude Code:
-```
-List all tables in the database
-Query the users table for active users
-Show me the schema for the orders table
-```
 
 ---
 
